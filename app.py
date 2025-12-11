@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import plotly.express as px  # 차트 그리는 도구 추가
 
 # ==========================================
 # 1. 스마트 데이터 로드 (유지)
@@ -14,16 +15,13 @@ def load_data():
             target_file = f
             break
     
-    if target_file is None:
-        return pd.DataFrame() # 파일 없음
+    if target_file is None: return pd.DataFrame()
 
-    try:
-        df = pd.read_csv(target_file, encoding='cp949')
+    try: df = pd.read_csv(target_file, encoding='cp949')
     except:
         try: df = pd.read_csv(target_file, encoding='utf-8')
         except: df = pd.read_csv(target_file, encoding='euc-kr')
 
-    # 컬럼 매칭 (당류, 단백질 등)
     cols_candidates = {
         '식품명': ['식품명', '제품명'],
         '당류': ['당류(g)', '당류'],
@@ -41,102 +39,187 @@ def load_data():
     
     if len(selected_cols) > 0:
         df = df[selected_cols].fillna(0)
-    
     return df
 
 try:
     food_db = load_data()
-    db_status = "✅ 시스템 정상 가동 중" if not food_db.empty else "⚠️ 데이터 로드 필요"
+    db_status = "✅ DB 연결됨" if not food_db.empty else "⚠️ DB 없음"
 except:
     food_db = pd.DataFrame()
-    db_status = "⚠️ 시스템 점검 중"
+    db_status = "⚠️ DB 에러"
 
 # ==========================================
-# 2. 설문 문항 정의 (20개 리스트)
+# 2. 설문 문항 (20개 유지)
 # ==========================================
-# 각 질문은 선택지에 따라 0점(좋음) ~ 5점(나쁨) 부여
 survey_sections = {
-    "Part 1. 식습관 (Diet)": [
-        {"q": "평소 밥, 빵, 면 등 탄수화물 위주의 식사를 하시나요?", "type": "score", "max": 5},
-        {"q": "식사 속도가 15분 이내로 빠른 편인가요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "믹스커피, 탄산음료, 주스를 매일 마시나요?", "type": "score", "max": 5},
-        {"q": "술을 일주일에 얼마나 드시나요?", "type": "select", "opts": {"안 마심":0, "1~2회":3, "3회 이상":5}},
-        {"q": "배가 부른데도 음식을 계속 먹는 경우가 있나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "야식(밤 9시 이후)을 얼마나 자주 드시나요?", "type": "score", "max": 5}
+    "식습관 (Diet)": [
+        {"q": "탄수화물(밥/빵/면) 위주 식사", "max": 5},
+        {"q": "식사 속도 빠름 (15분 이내)", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "단 음료(믹스커피/주스) 매일 섭취", "max": 5},
+        {"q": "음주 빈도", "type": "select", "opts": {"안함":0, "1~2회":3, "3회+":5}},
+        {"q": "배불러도 계속 먹음", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "야식 (밤 9시 이후)", "max": 5}
     ],
-    "Part 2. 신체 증상 (Symptoms)": [
-        {"q": "식사 후 참을 수 없는 졸음(식곤증)이 오나요?", "type": "score", "max": 5},
-        {"q": "최근 이유 없이 체중이 급격히 늘거나 줄었나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "갈증이 자주 나서 물을 많이 마시게 되나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "소변 거품이 생기거나 화장실을 자주 가나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "상처가 잘 낫지 않거나 피부가 가려운가요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "손발이 저리거나 찌릿한 느낌이 있나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}}
+    "신체증상 (Body)": [
+        {"q": "식후 식곤증", "max": 5},
+        {"q": "급격한 체중 변화", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "잦은 갈증/다음", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "잦은 소변/거품", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "상처 회복 느림/피부 가려움", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "손발 저림", "type": "binary", "opts": {"No":0, "Yes":5}}
     ],
-    "Part 3. 생활 습관 (Lifestyle)": [
-        {"q": "일주일에 30분 이상 운동을 몇 번 하시나요?", "type": "select", "opts": {"3회 이상":0, "1~2회":3, "거의 안 함":5}},
-        {"q": "평소 스트레스를 많이 받으시나요?", "type": "score", "max": 5},
-        {"q": "수면 시간은 규칙적인가요?", "type": "select", "opts": {"규칙적임":0, "보통":3, "불규칙함":5}},
-        {"q": "하루 대부분을 앉아서 보내시나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}}
+    "생활습관 (Life)": [
+        {"q": "운동 부족 (주 2회 미만)", "type": "select", "opts": {"운동함":0, "가끔":3, "안함":5}},
+        {"q": "스트레스 수준", "max": 5},
+        {"q": "수면 불규칙", "type": "select", "opts": {"규칙적":0, "보통":3, "불규칙":5}},
+        {"q": "좌식 생활 시간 긺", "type": "binary", "opts": {"No":0, "Yes":5}}
     ],
-    "Part 4. 가족력 및 기타 (History)": [
-        {"q": "부모님 중 당뇨병 환자가 있으신가요?", "type": "select", "opts": {"없음":0, "한 분":5, "두 분 다":10}},
-        {"q": "과거 건강검진에서 '혈당 주의' 소견을 받은 적 있나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "고혈압이나 고지혈증 약을 드시나요?", "type": "binary", "opts": {"아니오":0, "그렇다":5}},
-        {"q": "현재 본인의 나이대는?", "type": "select", "opts": {"2030":0, "4050":3, "60대 이상":5}}
+    "가족력/기타 (History)": [
+        {"q": "가족력 (당뇨)", "type": "select", "opts": {"없음":0, "1명":5, "2명+":10}},
+        {"q": "과거 혈당 주의 판정", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "혈압/고지혈증 약 복용", "type": "binary", "opts": {"No":0, "Yes":5}},
+        {"q": "연령대", "type": "select", "opts": {"2030":0, "4050":3, "60+":5}}
     ]
 }
 
 # ==========================================
-# 3. 로직 함수 (100점 만점 기준)
+# 3. 로직 함수
 # ==========================================
 def classify_group(score):
-    # 총점 100점 만점 기준으로 등급 산정
     if score <= 20: return "Group A", "Healthy (건강 유지형)", "blue"
     elif score <= 45: return "Group B", "Glucose Spike (혈당 스파이크형)", "green"
     elif score <= 70: return "Group C", "Pre-Diabetes (전단계 관리형)", "orange"
     else: return "Group D", "Diabetes (당뇨 집중 케어형)", "red"
 
 def get_recommendations(group, db):
-    if db.empty: return pd.DataFrame(), "데이터 로딩 중"
-    
+    if db.empty: return pd.DataFrame(), "데이터 없음"
     col_sugar = [c for c in db.columns if '당류' in c][0]
     
     if group == "Group A":
-        # 당류 15g 미만, 단백질 5g 이상
         filtered = db[(db[col_sugar] < 15) & (db['단백질(g)'] >= 5)]
-        desc = "맛과 건강의 밸런스 (당류 15g↓)"
+        desc = "밸런스 간식 (당류 15g↓)"
     elif group == "Group B":
-        # 당류 10g 미만
         filtered = db[db[col_sugar] < 10]
-        desc = "혈당 스파이크 방지 (당류 10g↓)"
+        desc = "스파이크 방지 (당류 10g↓)"
     elif group == "Group C":
-        # 당류 5g 미만
         filtered = db[db[col_sugar] <= 5]
-        desc = "철저한 전단계 관리 (당류 5g↓)"
+        desc = "전단계 관리 (당류 5g↓)"
     else: 
-        # 당류 1g 미만 (Zero)
         filtered = db[db[col_sugar] < 1]
-        desc = "당뇨 집중 케어 (무가당/Zero)"
+        desc = "집중 케어 (Zero Sugar)"
 
-    if len(filtered) > 0:
-        return filtered.sample(n=min(5, len(filtered))), desc
-    else:
-        return pd.DataFrame(), desc
+    return (filtered.sample(n=min(5, len(filtered))), desc) if len(filtered) > 0 else (pd.DataFrame(), desc)
 
 # ==========================================
-# 4. 앱 화면 구성
+# 4. UI 구성 (차트 추가됨)
 # ==========================================
-st.set_page_config(page_title="혈당마스터 정밀진단", page_icon="🩸")
+st.set_page_config(page_title="혈당마스터 리포트", page_icon="📊", layout="wide")
 
-st.title("🩸 혈당 마스터: 정밀 진단")
-st.caption(f"20개 문항으로 분석하는 나만의 혈당 타입 | {db_status}")
-st.divider()
+# 사이드바 (메뉴)
+with st.sidebar:
+    st.title("🩸 혈당 마스터")
+    st.info(f"DB 상태: {db_status}")
+    st.write("---")
+    st.write("이 서비스는 '가공식품 DB'를 기반으로 맞춤형 간식을 추천합니다.")
 
+st.title("📊 나만의 혈당 건강 리포트")
+st.caption("20개 정밀 문항 분석 및 시각화 결과 제공")
+
+# 점수 저장용 변수
+category_scores = {}
 total_score = 0
 
-with st.form("survey_form_20"):
+with st.form("survey_form_v3"):
+    # 2열로 배치해서 스크롤 줄이기
+    col1, col2 = st.columns(2)
     
-    for section, questions in survey_sections.items():
-        st.subheader(section)
-        for i, q_data in enumerate(questions):
-            # 질문 표시
+    # 딕셔너리를 리스트로 변환해서 인덱스로 접근 (좌우 배치용)
+    sections = list(survey_sections.items())
+    
+    # 왼쪽 컬럼 (Part 1, 2)
+    with col1:
+        for i in range(0, 2):
+            section_name, questions = sections[i]
+            st.subheader(section_name)
+            current_sec_score = 0
+            for j, q in enumerate(questions):
+                key = f"{section_name}_{j}"
+                if q.get('type') == 'binary':
+                    val = st.radio(q['q'], list(q['opts'].keys()), horizontal=True, key=key)
+                    score = q['opts'][val]
+                elif q.get('type') == 'select':
+                    val = st.selectbox(q['q'], list(q['opts'].keys()), key=key)
+                    score = q['opts'][val]
+                else:
+                    score = st.slider(q['q'], 0, q['max'], 0, key=key)
+                current_sec_score += score
+            category_scores[section_name] = current_sec_score
+            st.write("---")
+
+    # 오른쪽 컬럼 (Part 3, 4)
+    with col2:
+        for i in range(2, 4):
+            section_name, questions = sections[i]
+            st.subheader(section_name)
+            current_sec_score = 0
+            for j, q in enumerate(questions):
+                key = f"{section_name}_{j}"
+                if q.get('type') == 'binary':
+                    val = st.radio(q['q'], list(q['opts'].keys()), horizontal=True, key=key)
+                    score = q['opts'][val]
+                elif q.get('type') == 'select':
+                    val = st.selectbox(q['q'], list(q['opts'].keys()), key=key)
+                    score = q['opts'][val]
+                else:
+                    score = st.slider(q['q'], 0, q['max'], 0, key=key)
+                current_sec_score += score
+            category_scores[section_name] = current_sec_score
+            st.write("---")
+
+    submit = st.form_submit_button("🔍 분석 결과 및 리포트 보기", type="primary", use_container_width=True)
+
+if submit:
+    # 총점 계산
+    total_score = sum(category_scores.values())
+    g_code, g_name, color = classify_group(total_score)
+    
+    st.divider()
+    
+    # [시각화] 레이아웃: 왼쪽은 점수판, 오른쪽은 차트
+    res_col1, res_col2 = st.columns([1, 1])
+    
+    with res_col1:
+        st.markdown(f"### 당신의 유형: <span style='color:{color}'>{g_name}</span>", unsafe_allow_html=True)
+        st.metric(label="총 위험도 점수", value=f"{total_score}점", delta="-관리 필요" if total_score > 40 else "양호")
+        st.write(f"**{g_name}**에 해당하는 맞춤 솔루션을 제공합니다.")
+    
+    with res_col2:
+        # 방사형 차트 (Radar Chart) 그리기
+        df_chart = pd.DataFrame({
+            'Category': list(category_scores.keys()),
+            'Score': list(category_scores.values())
+        })
+        fig = px.line_polar(df_chart, r='Score', theta='Category', line_close=True, range_r=[0, 30])
+        fig.update_traces(fill='toself', line_color=color)
+        fig.update_layout(margin=dict(t=20, b=20, l=20, r=20)) # 여백 줄이기
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 상품 추천 섹션
+    st.subheader(f"📦 {g_code} 맞춤 큐레이션")
+    rec_df, rule = get_recommendations(g_code, food_db)
+    
+    if not rec_df.empty:
+        st.info(f"💡 추천 알고리즘 기준: {rule}")
+        # 3열로 카드 배치
+        rec_cols = st.columns(3)
+        for i, (idx, row) in enumerate(rec_df.iterrows()):
+            with rec_cols[i % 3]:
+                st.markdown(f"""
+                <div style="border:1px solid #ddd; padding:15px; border-radius:10px; height:200px;">
+                    <h4>{row['식품명']}</h4>
+                    <small>{row['제조사명']}</small>
+                    <hr>
+                    <p>🍬 당류: {row[rec_df.columns[2]]}g</p>
+                    <p>💪 단백질: {row['단백질(g)']}g</p>
+                </div>
+                """, unsafe_allow_html=True)
