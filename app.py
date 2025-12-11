@@ -59,32 +59,29 @@ def classify_group(score):
 
 # 👇 [수정 후] 이 함수 전체를 덮어쓰세요
 def get_recommendations(group, db):
-    """
-    그룹별 맞춤 식품 필터링 로직
-    """
-    # [수정된 부분] DB가 비어있으면 빈 데이터와 빈 설명, 2개를 반환해야 에러가 안 납니다.
+    # [수정 포인트] DB가 비어있어도 무조건 값 2개를 반환하게 수정
     if db.empty:
-        return pd.DataFrame(), "데이터가 로드되지 않았습니다."
+        return pd.DataFrame(), "데이터가 로드되지 않았습니다." 
 
+    # (아래 로직은 기존 설계대로 완벽합니다)
     if group == "Group A":
-        # 건강 유지: 당류 15g 미만 + 단백질 5g 이상
         filtered = db[(db['당류(g)'] < 15) & (db['단백질(g)'] >= 5)]
         desc = "당류 15g 미만, 고단백 간식"
-        
     elif group == "Group B":
-        # 스파이크 방지: 당류 5g 미만
         filtered = db[db['당류(g)'] <= 5]
         desc = "당류 5g 이하, 급상승 방지 간식"
-        
     elif group == "Group C":
-        # 전단계 관리: 당류 2g 미만
         filtered = db[db['당류(g)'] <= 2]
         desc = "당류 2g 이하, 엄격 관리 제품"
-        
-    else: # Group D
-        # 당뇨 케어: 당류 1g 미만 + 탄수화물 제한
+    else: 
         filtered = db[(db['당류(g)'] < 1) & (db['탄수화물(g)'] < 10)]
         desc = "당류 0g (Zero Sugar), 탄수화물 제한"
+
+    if len(filtered) > 0:
+        return filtered.sample(n=min(5, len(filtered))), desc
+    else:
+        # 여기도 2개를 반환해야 합니다.
+        return pd.DataFrame(), desc
 
     # 결과 추천
     if len(filtered) > 0:
